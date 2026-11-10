@@ -1,0 +1,26 @@
+# ESP-IDF Build & Generated Artifacts
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# C/C++ Object & Binary Files
+*.o
+*.a
+*.so
+*.exe
+*.dll
+*.elf
+*.bin
+*.map
+*.log
+
+# IDE & OS
+.cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP Weather Clock — Налаштування Wi-Fi</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="container header-inner">
+      <div>
+        <h1>ESP Weather Clock</h1>
+        <p class="subtitle">Панель керування Wi-Fi (режим AP + STA)</p>
+      </div>
+      <span id="fsm-badge" class="badge badge-neutral">Завантаження…</span>
+    </div>
+  </header>
+
+  <main class="container main-grid">
+    <!-- Поточний стан мережевих інтерфейсів (FR-004, FR-011) -->
+    <section class="card" aria-labelledby="status-heading">
+      <div class="card-header">
+        <h2 id="status-heading">Стан підключення</h2>
+        <button type="button" id="btn-refresh-status" class="btn btn-secondary btn-sm">Оновити</button>
+      </div>
+
+      <div id="error-banner" class="alert alert-error hidden" role="alert"></div>
+
+      <div class="status-grid">
+        <div class="status-box">
+          <h3>Клієнт (Локальна мережа STA)</h3>
+          <dl class="kv-list">
+            <div><dt>Статус:</dt><dd id="sta-connected">—</dd></div>
+            <div><dt>Мережа (SSID):</dt><dd id="sta-ssid">—</dd></div>
+            <div><dt>IP-адреса в LAN:</dt><dd id="sta-ip">0.0.0.0</dd></div>
+            <div><dt>Локальне ім'я (mDNS):</dt><dd><a id="mdns-link" href="http://weather-clock.local" target="_blank" rel="noopener">weather-clock.local</a></dd></div>
+            <div><dt>Рівень сигналу (RSSI):</dt><dd id="sta-rssi">—</dd></div>
+          </dl>
+        </div>
+
+        <div class="status-box">
+          <h3>Точка доступу (SoftAP)</h3>
+          <dl class="kv-list">
+            <div><dt>Назва (SSID):</dt><dd id="ap-ssid">ESP Weather Clock</dd></div>
+            <div><dt>IP-адреса AP:</dt><dd id="ap-ip">192.168.4.1</dd></div>
+            <div><dt>Підключено клієнтів:</dt><dd id="ap-clients">0</dd></div>
+            <div><dt>Радіоканал:</dt><dd id="ap-channel">1</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <details class="diagnostics-panel">
+        <summary>Системна діагностика (ESP32-C6)</summary>
+        <dl class="kv-list kv-inline">
+          <div><dt>Час роботи (Uptime):</dt><dd id="sys-uptime">0 с</dd></div>
+          <div><dt>Вільна пам'ять (Heap):</dt><dd id="sys-heap">—</dd></div>
+          <div><dt>Мінімум вільної пам'яті:</dt><dd id="sys-min-heap">—</dd></div>
+        </dl>
+      </details>
+    </section>
+
+    <!-- Налаштування клієнтського Wi-Fi (FR-005, FR-006, FR-007, FR-008) -->
+    <section class="card" aria-labelledby="sta-config-heading">
+      <div class="card-header">
+        <h2 id="sta-config-heading">Підключення до Wi-Fi роутера (STA)</h2>
+        <button type="button" id="btn-scan" class="btn btn-secondary btn-sm">Сканувати мережі</button>
+      </div>
+
+      <div id="scan-results-container" class="scan-container hidden">
+        <p class="scan-hint">Оберіть мережу зі списку або введіть SSID вручну:</p>
+        <ul id="scan-list" class="scan-list" role="listbox" aria-label="Доступні мережі Wi-Fi"></ul>
+      </div>
+
+      <form id="form-sta-connect" novalidate>
+        <div class="form-group">
+          <label for="input-sta-ssid">Назва мережі (SSID) <span class="required">*</span></label>
+          <input
+            type="text"
+            id="input-sta-ssid"
+            name="ssid"
+            maxlength="32"
+            required
+            autocomplete="off"
+            placeholder="Введіть або оберіть SSID (1–32 символи)">
+        </div>
+
+        <div class="form-group">
+          <label for="input-sta-password">Пароль мережі Wi-Fi</label>
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="input-sta-password"
+              name="password"
+              maxlength="63"
+              autocomplete="off"
+              placeholder="8–63 символи (або порожньо для відкритої мережі)">
+            <button type="button" class="btn-toggle-pass" data-target="input-sta-password" aria-label="Показати або приховати пароль">👁</button>
+          </div>
+          <small class="field-hint">Залиште поле порожнім, якщо мережа відкрита (без пароля).</small>
+        </div>
+
+        <div id="sta-form-feedback" class="alert hidden" role="status"></div>
+
+        <button type="submit" id="btn-sta-submit" class="btn btn-primary">Зберегти та підключитися</button>
+      </form>
+    </section>
+
+    <!-- Налаштування пароля точки доступу та скидання (FR-002, FR-012) -->
+    <section class="card" aria-labelledby="ap-config-heading">
+      <div class="card-header">
+        <h2 id="ap-config-heading">Безпека точки доступу «ESP Weather Clock»</h2>
+      </div>
+
+      <form id="form-ap-password" novalidate>
+        <div class="form-group">
+          <label for="input-ap-password">Новий пароль точки доступу <span class="required">*</span></label>
+          <div class="password-wrapper">
+            <input
+              type="password"
+              id="input-ap-password"
+              name="password"
+              minlength="8"
+              maxlength="63"
+              required
+              autocomplete="new-password"
+              placeholder="Від 8 до 63 символів (за замовчуванням: weather1)">
+            <button type="button" class="btn-toggle-pass" data-target="input-ap-password" aria-label="Показати або приховати пароль">👁</button>
+          </div>
+          <small class="field-hint">Назва точки доступу <strong>ESP Weather Clock</strong> є фіксованою. Для скидання пароля до <code>weather1</code> утримуйте кнопку <strong>BOOT</strong> на платі протягом 3 секунд.</small>
+        </div>
+
+        <div id="ap-form-feedback" class="alert hidden" role="status"></div>
+
+        <div class="button-row">
+          <button type="submit" id="btn-ap-submit" class="btn btn-primary">Оновити пароль AP</button>
+          <button type="button" id="btn-factory-reset" class="btn btn-danger">Скинути до заводських</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="app-footer container">
+    <p>Waveshare ESP32-C6-DEV-KIT-N8 • Режим <code>WIFI_MODE_APSTA</code></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
