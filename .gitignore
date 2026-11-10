@@ -24,3 +24,6 @@ dependencies.lock
 Thumbs.db
 *.tmp
 *.swp
+
+# Graphify output
+graphify-out/
