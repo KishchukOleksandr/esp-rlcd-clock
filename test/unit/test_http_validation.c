@@ -51,3 +51,44 @@ TEST_CASE("web_server rejects malformed or out-of-bounds JSON payloads", "[web_s
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
         web_server_parse_ap_password_json("{\"password\":\"short\"}", pass, sizeof(pass)));
 }
+
+TEST_CASE("web_server parses and validates POST /api/location JSON payloads (002-location-config)", "[web_server]")
+{
+    char loc_name[LOC_NAME_MAX_LEN + 1U] = {0};
+    double lat = 0.0;
+    double lon = 0.0;
+
+    /* Valid Ukrainian settlement payload */
+    esp_err_t err = web_server_parse_location_json(
+        "{\"name\":\"Львів\",\"latitude\":49.8397,\"longitude\":24.0297}",
+        loc_name, sizeof(loc_name), &lat, &lon);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_EQUAL_STRING("Львів", loc_name);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-4, 49.8397, lat);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-4, 24.0297, lon);
+
+    /* Boundary values (-90, 180) */
+    err = web_server_parse_location_json(
+        "{\"name\":\"Межа\",\"latitude\":-90.0,\"longitude\":180.0}",
+        loc_name, sizeof(loc_name), &lat, &lon);
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, -90.0, lat);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 180.0, lon);
+
+    /* Reject empty name, string coordinates, out-of-range coordinates, or malformed JSON */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_parse_location_json("{\"name\":\"\",\"latitude\":50.45,\"longitude\":30.52}",
+                                       loc_name, sizeof(loc_name), &lat, &lon));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_parse_location_json("{\"name\":\"Київ\",\"latitude\":\"50.45\",\"longitude\":30.52}",
+                                       loc_name, sizeof(loc_name), &lat, &lon));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_parse_location_json("{\"name\":\"Київ\",\"latitude\":95.0,\"longitude\":30.52}",
+                                       loc_name, sizeof(loc_name), &lat, &lon));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_parse_location_json("{\"name\":\"Київ\",\"latitude\":50.45,\"longitude\":-190.0}",
+                                       loc_name, sizeof(loc_name), &lat, &lon));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_parse_location_json("{bad json",
+                                       loc_name, sizeof(loc_name), &lat, &lon));
+}

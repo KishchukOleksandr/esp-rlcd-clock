@@ -1,7 +1,9 @@
 #include "config_store.h"
 
+#include <math.h>
 #include <string.h>
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -12,6 +14,20 @@ static const char *TAG = "config_store";
 #define NVS_KEY_STA_SSID    "sta_ssid"
 #define NVS_KEY_STA_PASS    "sta_pass"
 #define NVS_KEY_AP_PASS     "ap_pass"
+#define NVS_KEY_LOC_SET     "loc_set"
+#define NVS_KEY_LOC_NAME    "loc_name"
+#define NVS_KEY_LOC_LAT_U6  "loc_lat_u6"
+#define NVS_KEY_LOC_LON_U6  "loc_lon_u6"
+
+#define LOC_MICRODEG_SCALE  1000000.0
+
+static portMUX_TYPE s_loc_mux = portMUX_INITIALIZER_UNLOCKED;
+static location_config_t s_cached_location = {
+    .configured = false,
+    .name = "",
+    .latitude = 0.0,
+    .longitude = 0.0,
+};
 
 static bool is_printable_ascii(const char *str, size_t len)
 {
@@ -22,6 +38,23 @@ static bool is_printable_ascii(const char *str, size_t len)
         }
     }
     return true;
+}
+
+static void update_cached_location(bool configured, const char *name, double latitude, double longitude)
+{
+    portENTER_CRITICAL(&s_loc_mux);
+    s_cached_location.configured = configured;
+    if (configured && name != NULL) {
+        strncpy(s_cached_location.name, name, LOC_NAME_MAX_LEN);
+        s_cached_location.name[LOC_NAME_MAX_LEN] = '\0';
+        s_cached_location.latitude = latitude;
+        s_cached_location.longitude = longitude;
+    } else {
+        s_cached_location.name[0] = '\0';
+        s_cached_location.latitude = 0.0;
+        s_cached_location.longitude = 0.0;
+    }
+    portEXIT_CRITICAL(&s_loc_mux);
 }
 
 void config_store_get_defaults(wifi_stored_config_t *out_cfg)
@@ -36,6 +69,10 @@ void config_store_get_defaults(wifi_stored_config_t *out_cfg)
     out_cfg->sta_password[0] = '\0';
     strncpy(out_cfg->ap_password, WIFI_AP_DEFAULT_PASSWORD, WIFI_PASS_MAX_LEN);
     out_cfg->ap_password[WIFI_PASS_MAX_LEN] = '\0';
+    out_cfg->loc_configured = false;
+    out_cfg->loc_name[0] = '\0';
+    out_cfg->latitude = 0.0;
+    out_cfg->longitude = 0.0;
 }
 
 bool config_store_validate_ssid(const char *ssid)
@@ -65,6 +102,53 @@ bool config_store_validate_password(const char *password, bool allow_open)
     return is_printable_ascii(password, len);
 }
 
+bool config_store_validate_location(const char *name, double latitude, double longitude)
+{
+    if (name == NULL) {
+        return false;
+    }
+    size_t len = strnlen(name, LOC_NAME_MAX_LEN + 1U);
+    if (len == 0U || len > LOC_NAME_MAX_LEN) {
+        return false;
+    }
+
+    bool has_non_space = false;
+    for (size_t i = 0U; i < len; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        if (c < 0x20U || c == 0x7FU) {
+            return false;
+        }
+        if (c > 0x20U) {
+            has_non_space = true;
+        }
+    }
+    if (!has_non_space) {
+        return false;
+    }
+
+    if (!isfinite(latitude) || !isfinite(longitude)) {
+        return false;
+    }
+    if (latitude < LOC_LAT_MIN || latitude > LOC_LAT_MAX) {
+        return false;
+    }
+    if (longitude < LOC_LON_MIN || longitude > LOC_LON_MAX) {
+        return false;
+    }
+
+    return true;
+}
+
+void config_store_get_location(location_config_t *out_loc)
+{
+    if (out_loc == NULL) {
+        return;
+    }
+    portENTER_CRITICAL(&s_loc_mux);
+    *out_loc = s_cached_location;
+    portEXIT_CRITICAL(&s_loc_mux);
+}
+
 esp_err_t config_store_init(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -88,6 +172,7 @@ esp_err_t config_store_load(wifi_stored_config_t *out_cfg)
     }
 
     config_store_get_defaults(out_cfg);
+    update_cached_location(false, "", 0.0, 0.0);
 
     nvs_handle_t handle;
     esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READONLY, &handle);
@@ -102,7 +187,7 @@ esp_err_t config_store_load(wifi_stored_config_t *out_cfg)
 
     uint8_t schema_ver = 0U;
     if (nvs_get_u8(handle, NVS_KEY_SCHEMA_VER, &schema_ver) != ESP_OK ||
-        schema_ver != CONFIG_STORE_SCHEMA_VERSION) {
+        (schema_ver != CONFIG_STORE_SCHEMA_VERSION_V1 && schema_ver != CONFIG_STORE_SCHEMA_VERSION)) {
         ESP_LOGW(TAG, "NVS schema mismatch or uninitialized (ver=%u); using defaults", (unsigned)schema_ver);
         nvs_close(handle);
         return ESP_OK;
@@ -139,9 +224,53 @@ esp_err_t config_store_load(wifi_stored_config_t *out_cfg)
         }
     }
 
+    if (schema_ver >= CONFIG_STORE_SCHEMA_VERSION) {
+        uint8_t loc_set = 0U;
+        if (nvs_get_u8(handle, NVS_KEY_LOC_SET, &loc_set) == ESP_OK && loc_set == 1U) {
+            char loc_name[LOC_NAME_MAX_LEN + 1U] = {0};
+            size_t loc_name_len = sizeof(loc_name);
+            int32_t lat_u6 = 0;
+            int32_t lon_u6 = 0;
+
+            esp_err_t name_err = nvs_get_str(handle, NVS_KEY_LOC_NAME, loc_name, &loc_name_len);
+            esp_err_t lat_err = nvs_get_i32(handle, NVS_KEY_LOC_LAT_U6, &lat_u6);
+            esp_err_t lon_err = nvs_get_i32(handle, NVS_KEY_LOC_LON_U6, &lon_u6);
+
+            double lat = (double)lat_u6 / LOC_MICRODEG_SCALE;
+            double lon = (double)lon_u6 / LOC_MICRODEG_SCALE;
+
+            if (name_err == ESP_OK && lat_err == ESP_OK && lon_err == ESP_OK &&
+                config_store_validate_location(loc_name, lat, lon)) {
+                out_cfg->loc_configured = true;
+                strncpy(out_cfg->loc_name, loc_name, LOC_NAME_MAX_LEN);
+                out_cfg->loc_name[LOC_NAME_MAX_LEN] = '\0';
+                out_cfg->latitude = lat;
+                out_cfg->longitude = lon;
+                update_cached_location(true, out_cfg->loc_name, lat, lon);
+            } else {
+                ESP_LOGW(TAG, "Stored location failed validation or incomplete; falling back to unconfigured");
+            }
+        }
+    }
+
     nvs_close(handle);
-    ESP_LOGI(TAG, "Loaded config: sta_configured=%d, sta_ssid='%s'",
-             (int)out_cfg->sta_configured, out_cfg->sta_ssid);
+
+    /* Forward migration from schema v1 -> v2 preserving existing STA/AP config */
+    if (schema_ver == CONFIG_STORE_SCHEMA_VERSION_V1) {
+        nvs_handle_t rw_handle;
+        if (nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READWRITE, &rw_handle) == ESP_OK) {
+            if (nvs_set_u8(rw_handle, NVS_KEY_LOC_SET, 0U) == ESP_OK &&
+                nvs_set_u8(rw_handle, NVS_KEY_SCHEMA_VER, CONFIG_STORE_SCHEMA_VERSION) == ESP_OK) {
+                nvs_commit(rw_handle);
+                ESP_LOGI(TAG, "Migrated NVS schema v1 -> v2 (STA/AP preserved, location initialized)");
+            }
+            nvs_close(rw_handle);
+        }
+    }
+
+    ESP_LOGI(TAG, "Loaded config: sta_configured=%d, sta_ssid='%s', loc_configured=%d, loc_name='%s'",
+             (int)out_cfg->sta_configured, out_cfg->sta_ssid,
+             (int)out_cfg->loc_configured, out_cfg->loc_name);
     return ESP_OK;
 }
 
@@ -217,8 +346,59 @@ esp_err_t config_store_save_ap_password(const char *ap_password)
     return ESP_OK;
 }
 
+esp_err_t config_store_save_location(const char *name, double latitude, double longitude)
+{
+    if (!config_store_validate_location(name, latitude, longitude)) {
+        ESP_LOGW(TAG, "Rejected invalid location parameters prior to NVS write");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    int32_t lat_u6 = (int32_t)llround(latitude * LOC_MICRODEG_SCALE);
+    int32_t lon_u6 = (int32_t)llround(longitude * LOC_MICRODEG_SCALE);
+    double normalized_lat = (double)lat_u6 / LOC_MICRODEG_SCALE;
+    double normalized_lon = (double)lon_u6 / LOC_MICRODEG_SCALE;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for writing location config: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_u8(handle, NVS_KEY_SCHEMA_VER, CONFIG_STORE_SCHEMA_VERSION);
+    if (err == ESP_OK) {
+        err = nvs_set_str(handle, NVS_KEY_LOC_NAME, name);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_i32(handle, NVS_KEY_LOC_LAT_U6, lat_u6);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_i32(handle, NVS_KEY_LOC_LON_U6, lon_u6);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, NVS_KEY_LOC_SET, 1U);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit location config to NVS: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    update_cached_location(true, name, normalized_lat, normalized_lon);
+    ESP_LOGI(TAG, "Saved location '%s' (lat=%.6f, lon=%.6f) to NVS",
+             name, normalized_lat, normalized_lon);
+    return ESP_OK;
+}
+
 esp_err_t config_store_factory_reset(void)
 {
+    update_cached_location(false, "", 0.0, 0.0);
+
     nvs_handle_t handle;
     esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
@@ -237,7 +417,7 @@ esp_err_t config_store_factory_reset(void)
     nvs_close(handle);
 
     if (err == ESP_OK) {
-        ESP_LOGW(TAG, "Factory reset completed: AP password restored to '%s', STA cleared",
+        ESP_LOGW(TAG, "Factory reset completed: AP password restored to '%s', STA and location cleared",
                  WIFI_AP_DEFAULT_PASSWORD);
     }
     return err;

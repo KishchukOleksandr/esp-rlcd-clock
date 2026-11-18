@@ -210,7 +210,9 @@ body {
 }
 
 input[type="text"],
-input[type="password"] {
+input[type="password"],
+input[type="number"],
+select {
   width: 100%;
   padding: 10px 12px;
   font-size: 0.95rem;
@@ -218,6 +220,12 @@ input[type="password"] {
   border-radius: 6px;
   background-color: var(--surface-alt);
   color: var(--text);
+}
+
+.coord-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
 }
 
 .password-wrapper {

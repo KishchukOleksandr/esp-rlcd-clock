@@ -14,11 +14,16 @@ static const char *TAG = "app_core";
 static void on_boot_button_long_press(void *user_ctx)
 {
     (void)user_ctx;
-    ESP_LOGW(TAG, "Hardware BOOT button factory reset triggered (FR-012)!");
+    ESP_LOGW(TAG, "Hardware BOOT button factory reset triggered (FR-010, FR-012)!");
     esp_err_t err = wifi_manager_apply_factory_reset();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Factory reset via BOOT button failed: %s", esp_err_to_name(err));
     }
+}
+
+void app_core_get_location(location_config_t *out_loc)
+{
+    config_store_get_location(out_loc);
 }
 
 esp_err_t app_core_init(void)
@@ -62,11 +67,15 @@ void app_core_log_diagnostics(void)
     UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(NULL);
     wifi_runtime_status_t st = {0};
     wifi_manager_get_status(&st);
+    location_config_t loc = {0};
+    config_store_get_location(&loc);
 
-    ESP_LOGI(TAG, "Health: fsm=%s, sta_ip=%s, ap_clients=%u, free_heap=%lu B, min_heap=%lu B, stack_hwm=%u B",
+    ESP_LOGI(TAG, "Health: fsm=%s, sta_ip=%s, ap_clients=%u, loc='%s'(%d), free_heap=%lu B, min_heap=%lu B, stack_hwm=%u B",
              wifi_fsm_state_to_str(st.fsm_state),
              st.sta_ip,
              (unsigned)st.ap_client_count,
+             loc.configured ? loc.name : "unset",
+             (int)loc.configured,
              (unsigned long)esp_get_free_heap_size(),
              (unsigned long)esp_get_minimum_free_heap_size(),
              (unsigned)(stack_hwm * sizeof(StackType_t)));

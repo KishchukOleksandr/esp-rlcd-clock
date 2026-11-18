@@ -143,10 +143,14 @@ if ($null -eq $Options) {
     foreach ($candidate in $pythonCandidates) {
         if (Get-Command $candidate -ErrorAction SilentlyContinue) {
             # Verify it is Python 3 with PyYAML available.
-            $null = & $candidate -c "import sys; import yaml; sys.exit(0 if sys.version_info[0] == 3 else 1)" 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $pythonCmd = $candidate
-                break
+            try {
+                $null = & $candidate -c "import sys; import yaml; sys.exit(0 if sys.version_info[0] == 3 else 1)" 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $pythonCmd = $candidate
+                    break
+                }
+            } catch {
+                # Ignore Windows Store alias or broken candidate and try next
             }
         }
     }
@@ -196,8 +200,21 @@ print(json.dumps(data))
     }
 
     if (-not $Options) {
-        Write-Warning "agent-context: unable to parse $ExtConfig; skipping update."
-        exit 0
+        # Simple regex fallback for basic agent-context-config.yml when neither ConvertFrom-Yaml nor PyYAML is available
+        $rawYaml = Get-Content -LiteralPath $ExtConfig -Raw -ErrorAction SilentlyContinue
+        if ($rawYaml -match '(?m)^\s*context_file:\s*(\S+)') {
+            $Options = @{
+                context_file = $Matches[1].Trim()
+                context_files = @()
+                context_markers = @{
+                    start = '<!-- SPECKIT START -->'
+                    end   = '<!-- SPECKIT END -->'
+                }
+            }
+        } else {
+            Write-Warning "agent-context: unable to parse $ExtConfig; skipping update."
+            exit 0
+        }
     }
 }
 
