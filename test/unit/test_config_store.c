@@ -1,8 +1,9 @@
+#include <math.h>
 #include <string.h>
 #include "unity.h"
 #include "config_store.h"
 
-TEST_CASE("config_store defaults initialize fixed AP password and empty STA", "[config_store]")
+TEST_CASE("config_store defaults initialize fixed AP password, empty STA, and unconfigured location", "[config_store]")
 {
     wifi_stored_config_t cfg;
     config_store_get_defaults(&cfg);
@@ -13,6 +14,10 @@ TEST_CASE("config_store defaults initialize fixed AP password and empty STA", "[
     TEST_ASSERT_EQUAL_STRING("", cfg.sta_password);
     TEST_ASSERT_EQUAL_STRING("weather1", cfg.ap_password);
     TEST_ASSERT_EQUAL_STRING("ESP Weather Clock", WIFI_AP_FIXED_SSID);
+    TEST_ASSERT_FALSE(cfg.loc_configured);
+    TEST_ASSERT_EQUAL_STRING("", cfg.loc_name);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 0.0, cfg.latitude);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 0.0, cfg.longitude);
 }
 
 TEST_CASE("config_store validates SSID bounds 1..32 bytes (FR-006)", "[config_store]")
@@ -44,4 +49,36 @@ TEST_CASE("config_store validates STA and AP passwords (FR-002, FR-006)", "[conf
     const char *pass_64 = "1234567890123456789012345678901234567890123456789012345678901234";
     TEST_ASSERT_TRUE(config_store_validate_password(pass_63, false));
     TEST_ASSERT_FALSE(config_store_validate_password(pass_64, false));
+}
+
+TEST_CASE("config_store validates Ukrainian settlement names and coordinates (002-location-config FR-004)", "[config_store]")
+{
+    /* Valid Ukrainian settlements and coordinates */
+    TEST_ASSERT_TRUE(config_store_validate_location("Київ", 50.4501, 30.5234));
+    TEST_ASSERT_TRUE(config_store_validate_location("Івано-Франківськ", 48.9226, 24.7111));
+    TEST_ASSERT_TRUE(config_store_validate_location("Кам'янець-Подільський", 48.6788, 26.5852));
+
+    /* Exact boundary coordinates (-90, 90, -180, 180, 0.0) */
+    TEST_ASSERT_TRUE(config_store_validate_location("Екватор", 0.0, 0.0));
+    TEST_ASSERT_TRUE(config_store_validate_location("Південний полюс", -90.0, -180.0));
+    TEST_ASSERT_TRUE(config_store_validate_location("Північний полюс", 90.0, 180.0));
+
+    /* Out-of-range coordinates rejected */
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", -90.0001, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", 90.0001, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", 50.4501, -180.0001));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", 50.4501, 180.0001));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", NAN, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ", 50.4501, INFINITY));
+
+    /* Invalid names: NULL, empty, whitespace-only, control chars, >64 bytes */
+    TEST_ASSERT_FALSE(config_store_validate_location(NULL, 50.4501, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("", 50.4501, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("    ", 50.4501, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location("Київ\n", 50.4501, 30.5234));
+
+    const char *name_64 = "1234567890123456789012345678901234567890123456789012345678901234";
+    const char *name_65 = "12345678901234567890123456789012345678901234567890123456789012345";
+    TEST_ASSERT_TRUE(config_store_validate_location(name_64, 50.4501, 30.5234));
+    TEST_ASSERT_FALSE(config_store_validate_location(name_65, 50.4501, 30.5234));
 }

@@ -1,6 +1,63 @@
 (function () {
   "use strict";
 
+  /* Вбудований офлайн-довідник населених пунктів України (002-location-config: FR-001, FR-002, FR-009) */
+  const UA_SETTLEMENTS = [
+    { name: "Біла Церква", lat: 49.7956, lon: 30.1167 },
+    { name: "Бердянськ", lat: 46.7598, lon: 36.7989 },
+    { name: "Бориспіль", lat: 50.3516, lon: 30.9508 },
+    { name: "Бровари", lat: 50.5114, lon: 30.7903 },
+    { name: "Буча", lat: 50.5434, lon: 30.2120 },
+    { name: "Вінниця", lat: 49.2331, lon: 28.4682 },
+    { name: "Дніпро", lat: 48.4647, lon: 35.0462 },
+    { name: "Донецьк", lat: 48.0159, lon: 37.8028 },
+    { name: "Дрогобич", lat: 49.3500, lon: 23.5000 },
+    { name: "Житомир", lat: 50.2547, lon: 28.6587 },
+    { name: "Запоріжжя", lat: 47.8388, lon: 35.1396 },
+    { name: "Івано-Франківськ", lat: 48.9226, lon: 24.7111 },
+    { name: "Ізмаїл", lat: 45.3500, lon: 28.8333 },
+    { name: "Ірпінь", lat: 50.5218, lon: 30.2506 },
+    { name: "Кам'янець-Подільський", lat: 48.6788, lon: 26.5852 },
+    { name: "Кам'янське", lat: 48.5231, lon: 34.6136 },
+    { name: "Київ", lat: 50.4501, lon: 30.5234 },
+    { name: "Ковель", lat: 51.2167, lon: 24.7167 },
+    { name: "Коломия", lat: 48.5306, lon: 25.0403 },
+    { name: "Конотоп", lat: 51.2400, lon: 33.2000 },
+    { name: "Краматорськ", lat: 48.7386, lon: 37.5842 },
+    { name: "Кременчук", lat: 49.0685, lon: 33.4204 },
+    { name: "Кривий Ріг", lat: 47.9105, lon: 33.3918 },
+    { name: "Кропивницький", lat: 48.5079, lon: 32.2623 },
+    { name: "Луганськ", lat: 48.5740, lon: 39.3078 },
+    { name: "Луцьк", lat: 50.7472, lon: 25.3254 },
+    { name: "Львів", lat: 49.8397, lon: 24.0297 },
+    { name: "Маріуполь", lat: 47.0971, lon: 37.5434 },
+    { name: "Мелітополь", lat: 46.8489, lon: 35.3653 },
+    { name: "Миколаїв", lat: 46.9750, lon: 31.9946 },
+    { name: "Мукачево", lat: 48.4414, lon: 22.7178 },
+    { name: "Нікополь", lat: 47.5719, lon: 34.3964 },
+    { name: "Одеса", lat: 46.4825, lon: 30.7233 },
+    { name: "Олександрія", lat: 48.6667, lon: 33.1167 },
+    { name: "Павлоград", lat: 48.5342, lon: 35.8700 },
+    { name: "Полтава", lat: 49.5883, lon: 34.5514 },
+    { name: "Рівне", lat: 50.6199, lon: 26.2516 },
+    { name: "Севастополь", lat: 44.6166, lon: 33.5254 },
+    { name: "Сімферополь", lat: 44.9521, lon: 34.1024 },
+    { name: "Слов'янськ", lat: 48.8533, lon: 37.6250 },
+    { name: "Суми", lat: 50.9077, lon: 34.7981 },
+    { name: "Тернопіль", lat: 49.5535, lon: 25.5948 },
+    { name: "Ужгород", lat: 48.6208, lon: 22.2879 },
+    { name: "Умань", lat: 48.7484, lon: 30.2218 },
+    { name: "Харків", lat: 49.9935, lon: 36.2304 },
+    { name: "Херсон", lat: 46.6354, lon: 32.6169 },
+    { name: "Хмельницький", lat: 49.4230, lon: 26.9871 },
+    { name: "Черкаси", lat: 49.4444, lon: 32.0598 },
+    { name: "Чернівці", lat: 48.2915, lon: 25.9403 },
+    { name: "Чернігів", lat: 51.4982, lon: 31.2893 },
+    { name: "Шостка", lat: 51.8631, lon: 33.4697 }
+  ];
+
+  const MANUAL_CITY_VALUE = "__manual__";
+
   const fsmBadge = document.getElementById("fsm-badge");
   const errorBanner = document.getElementById("error-banner");
   const staConnectedEl = document.getElementById("sta-connected");
@@ -27,11 +84,22 @@
   const staFeedback = document.getElementById("sta-form-feedback");
   const btnStaSubmit = document.getElementById("btn-sta-submit");
 
+  const formLocation = document.getElementById("form-location");
+  const selectUaCity = document.getElementById("select-ua-city");
+  const inputLocName = document.getElementById("input-loc-name");
+  const inputLocLat = document.getElementById("input-loc-lat");
+  const inputLocLon = document.getElementById("input-loc-lon");
+  const locStatusBadge = document.getElementById("loc-status-badge");
+  const locFeedback = document.getElementById("loc-form-feedback");
+  const btnLocSubmit = document.getElementById("btn-loc-submit");
+
   const formAp = document.getElementById("form-ap-password");
   const inputApPass = document.getElementById("input-ap-password");
   const apFeedback = document.getElementById("ap-form-feedback");
   const btnApSubmit = document.getElementById("btn-ap-submit");
   const btnFactoryReset = document.getElementById("btn-factory-reset");
+
+  let locFormDirty = false;
 
   function showAlert(el, message, isError) {
     el.textContent = message;
@@ -41,6 +109,81 @@
   function hideAlert(el) {
     el.textContent = "";
     el.className = "alert hidden";
+  }
+
+  function getUtf8ByteLength(str) {
+    if (typeof TextEncoder !== "undefined") {
+      return new TextEncoder().encode(str).length;
+    }
+    return unescape(encodeURIComponent(str)).length;
+  }
+
+  function initSettlementDropdown() {
+    if (!selectUaCity) {
+      return;
+    }
+    UA_SETTLEMENTS.forEach(function (city, idx) {
+      const opt = document.createElement("option");
+      opt.value = String(idx);
+      opt.textContent = city.name + " (" + city.lat.toFixed(4) + ", " + city.lon.toFixed(4) + ")";
+      selectUaCity.appendChild(opt);
+    });
+    const manualOpt = document.createElement("option");
+    manualOpt.value = MANUAL_CITY_VALUE;
+    manualOpt.textContent = "Інший населений пункт (ввести вручну)";
+    selectUaCity.appendChild(manualOpt);
+  }
+
+  function findSettlementIndex(name, lat, lon) {
+    for (let i = 0; i < UA_SETTLEMENTS.length; ++i) {
+      const item = UA_SETTLEMENTS[i];
+      if (item.name === name &&
+          Math.abs(item.lat - lat) < 0.0005 &&
+          Math.abs(item.lon - lon) < 0.0005) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function updateLocationBadge(configured, name) {
+    if (!locStatusBadge) {
+      return;
+    }
+    if (configured && name) {
+      locStatusBadge.textContent = "Встановлено: " + name;
+      locStatusBadge.className = "badge badge-success";
+    } else {
+      locStatusBadge.textContent = "Не налаштовано";
+      locStatusBadge.className = "badge badge-neutral";
+    }
+  }
+
+  function syncLocationFormFromStatus(loc) {
+    if (!loc) {
+      return;
+    }
+    updateLocationBadge(Boolean(loc.configured), loc.name);
+
+    if (locFormDirty) {
+      return;
+    }
+
+    if (loc.configured && loc.name) {
+      const latNum = Number(loc.latitude);
+      const lonNum = Number(loc.longitude);
+      inputLocName.value = loc.name;
+      inputLocLat.value = Number.isFinite(latNum) ? String(Number(latNum.toFixed(6))) : "0";
+      inputLocLon.value = Number.isFinite(lonNum) ? String(Number(lonNum.toFixed(6))) : "0";
+
+      const matchIdx = findSettlementIndex(loc.name, latNum, lonNum);
+      selectUaCity.value = matchIdx >= 0 ? String(matchIdx) : MANUAL_CITY_VALUE;
+    } else {
+      selectUaCity.value = "";
+      inputLocName.value = "";
+      inputLocLat.value = "";
+      inputLocLon.value = "";
+    }
   }
 
   function formatUptime(seconds) {
@@ -107,6 +250,10 @@
         apIpEl.textContent = data.ap.ip || "192.168.4.1";
         apClientsEl.textContent = String(data.ap.client_count ?? 0);
         apChannelEl.textContent = String(data.ap.channel ?? 1);
+      }
+
+      if (data.location) {
+        syncLocationFormFromStatus(data.location);
       }
 
       if (data.system) {
@@ -181,6 +328,113 @@
     }
   }
 
+  if (selectUaCity) {
+    selectUaCity.addEventListener("change", function () {
+      locFormDirty = true;
+      hideAlert(locFeedback);
+      const val = selectUaCity.value;
+      if (val === "" || val === MANUAL_CITY_VALUE) {
+        if (val === MANUAL_CITY_VALUE) {
+          inputLocName.focus();
+        }
+        return;
+      }
+      const idx = Number(val);
+      const city = UA_SETTLEMENTS[idx];
+      if (city) {
+        inputLocName.value = city.name;
+        inputLocLat.value = city.lat.toFixed(4);
+        inputLocLon.value = city.lon.toFixed(4);
+      }
+    });
+  }
+
+  function onManualLocationInput() {
+    locFormDirty = true;
+    const name = inputLocName.value.trim();
+    const lat = Number(inputLocLat.value.trim().replace(",", "."));
+    const lon = Number(inputLocLon.value.trim().replace(",", "."));
+    if (name && Number.isFinite(lat) && Number.isFinite(lon)) {
+      const idx = findSettlementIndex(name, lat, lon);
+      selectUaCity.value = idx >= 0 ? String(idx) : MANUAL_CITY_VALUE;
+    } else {
+      selectUaCity.value = MANUAL_CITY_VALUE;
+    }
+  }
+
+  if (inputLocName && inputLocLat && inputLocLon) {
+    inputLocName.addEventListener("input", onManualLocationInput);
+    inputLocLat.addEventListener("input", onManualLocationInput);
+    inputLocLon.addEventListener("input", onManualLocationInput);
+  }
+
+  if (formLocation) {
+    formLocation.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      hideAlert(locFeedback);
+
+      const name = inputLocName.value.trim();
+      const latRaw = inputLocLat.value.trim().replace(",", ".");
+      const lonRaw = inputLocLon.value.trim().replace(",", ".");
+
+      const nameBytes = getUtf8ByteLength(name);
+      if (name.length === 0 || nameBytes < 1 || nameBytes > 64) {
+        showAlert(locFeedback, "Вкажіть назву населеного пункту (до 64 байтів UTF-8).", true);
+        return;
+      }
+
+      if (latRaw === "" || lonRaw === "") {
+        showAlert(locFeedback, "Вкажіть числові значення широти (-90..90) та довготи (-180..180).", true);
+        return;
+      }
+
+      const latitude = Number(latRaw);
+      const longitude = Number(lonRaw);
+
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+        showAlert(locFeedback, "Широта (Latitude) має бути числом у межах від -90 до 90.", true);
+        return;
+      }
+
+      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        showAlert(locFeedback, "Довгота (Longitude) має бути числом у межах від -180 до 180.", true);
+        return;
+      }
+
+      inputLocLat.value = String(latitude);
+      inputLocLon.value = String(longitude);
+      btnLocSubmit.disabled = true;
+
+      try {
+        const res = await fetch("/api/location", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name,
+            latitude: latitude,
+            longitude: longitude
+          })
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+          showAlert(locFeedback, payload.message || "Помилка збереження місця знаходження.", true);
+        } else {
+          locFormDirty = false;
+          if (payload.location) {
+            syncLocationFormFromStatus(payload.location);
+          } else {
+            updateLocationBadge(true, name);
+          }
+          showAlert(locFeedback, payload.message || "Місце знаходження успішно збережено.", false);
+        }
+      } catch (err) {
+        showAlert(locFeedback, "Не вдалося з'єднатися з пристроєм для збереження локації.", true);
+      } finally {
+        btnLocSubmit.disabled = false;
+      }
+    });
+  }
+
   formSta.addEventListener("submit", async function (e) {
     e.preventDefault();
     hideAlert(staFeedback);
@@ -250,10 +504,11 @@
   });
 
   btnFactoryReset.addEventListener("click", async function () {
-    if (!window.confirm("Скинути всі налаштування Wi-Fi до заводських (пароль точки доступу: weather1)?")) {
+    if (!window.confirm("Скинути всі налаштування Wi-Fi та місця знаходження до заводських (пароль точки доступу: weather1)?")) {
       return;
     }
     hideAlert(apFeedback);
+    hideAlert(locFeedback);
     btnFactoryReset.disabled = true;
     try {
       const res = await fetch("/api/wifi/reset", { method: "POST" });
@@ -261,6 +516,8 @@
       showAlert(apFeedback, payload.message || "Налаштування скинуто до заводських.", false);
       inputStaSsid.value = "";
       inputStaPass.value = "";
+      locFormDirty = false;
+      syncLocationFormFromStatus({ configured: false, name: "", latitude: 0, longitude: 0 });
       setTimeout(fetchStatus, 1500);
     } catch (err) {
       showAlert(apFeedback, "Налаштування скинуто. Перепідключіться з паролем weather1.", false);
@@ -279,6 +536,7 @@
     });
   });
 
+  initSettlementDropdown();
   btnRefresh.addEventListener("click", fetchStatus);
   btnScan.addEventListener("click", scanNetworks);
 

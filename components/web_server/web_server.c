@@ -98,6 +98,48 @@ esp_err_t web_server_parse_ap_password_json(const char *json_str,
     return ESP_OK;
 }
 
+esp_err_t web_server_parse_location_json(const char *json_str,
+                                         char *out_name, size_t name_buf_len,
+                                         double *out_lat, double *out_lon)
+{
+    if (json_str == NULL || out_name == NULL || out_lat == NULL || out_lon == NULL ||
+        name_buf_len <= LOC_NAME_MAX_LEN) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *root = cJSON_Parse(json_str);
+    if (root == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+    const cJSON *lat_item = cJSON_GetObjectItemCaseSensitive(root, "latitude");
+    const cJSON *lon_item = cJSON_GetObjectItemCaseSensitive(root, "longitude");
+
+    if (!cJSON_IsString(name_item) || name_item->valuestring == NULL ||
+        !cJSON_IsNumber(lat_item) || !cJSON_IsNumber(lon_item)) {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *name_val = name_item->valuestring;
+    double lat_val = lat_item->valuedouble;
+    double lon_val = lon_item->valuedouble;
+
+    if (!config_store_validate_location(name_val, lat_val, lon_val)) {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    strncpy(out_name, name_val, LOC_NAME_MAX_LEN);
+    out_name[LOC_NAME_MAX_LEN] = '\0';
+    *out_lat = lat_val;
+    *out_lon = lon_val;
+
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
 static esp_err_t send_json_response(httpd_req_t *req, const char *status, cJSON *json_obj)
 {
     char *rendered = cJSON_PrintUnformatted(json_obj);
@@ -190,6 +232,16 @@ static esp_err_t handle_get_status(httpd_req_t *req)
         cJSON_AddStringToObject(ap, "ip", st.ap_ip);
         cJSON_AddNumberToObject(ap, "client_count", st.ap_client_count);
         cJSON_AddNumberToObject(ap, "channel", st.ap_channel);
+    }
+
+    location_config_t loc = {0};
+    config_store_get_location(&loc);
+    cJSON *loc_obj = cJSON_AddObjectToObject(root, "location");
+    if (loc_obj != NULL) {
+        cJSON_AddBoolToObject(loc_obj, "configured", loc.configured);
+        cJSON_AddStringToObject(loc_obj, "name", loc.name);
+        cJSON_AddNumberToObject(loc_obj, "latitude", loc.latitude);
+        cJSON_AddNumberToObject(loc_obj, "longitude", loc.longitude);
     }
 
     cJSON *sys = cJSON_AddObjectToObject(root, "system");
@@ -328,7 +380,82 @@ static esp_err_t handle_post_wifi_reset(httpd_req_t *req)
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddStringToObject(resp, "status", "reset");
     cJSON_AddStringToObject(resp, "message",
-        "Налаштування скинуто до заводських (пароль точки доступу: weather1).");
+        "Налаштування скинуто до заводських (пароль точки доступу: weather1, місце знаходження очищено).");
+    esp_err_t res = send_json_response(req, "200 OK", resp);
+    cJSON_Delete(resp);
+    return res;
+}
+
+static esp_err_t handle_get_location(httpd_req_t *req)
+{
+    location_config_t loc = {0};
+    config_store_get_location(&loc);
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+
+    cJSON_AddBoolToObject(root, "configured", loc.configured);
+    cJSON_AddStringToObject(root, "name", loc.name);
+    cJSON_AddNumberToObject(root, "latitude", loc.latitude);
+    cJSON_AddNumberToObject(root, "longitude", loc.longitude);
+
+    esp_err_t res = send_json_response(req, "200 OK", root);
+    cJSON_Delete(root);
+    return res;
+}
+
+static esp_err_t handle_post_location(httpd_req_t *req)
+{
+    char body[HTTP_MAX_POST_BODY_LEN];
+    if (read_request_body(req, body, sizeof(body)) != ESP_OK) {
+        cJSON *err_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(err_obj, "error", "INVALID_LOCATION");
+        cJSON_AddStringToObject(err_obj, "message",
+            "Вкажіть назву населеного пункту (1–64 символи), широту (-90..90) та довготу (-180..180).");
+        esp_err_t res = send_json_response(req, "400 Bad Request", err_obj);
+        cJSON_Delete(err_obj);
+        return res;
+    }
+
+    char loc_name[LOC_NAME_MAX_LEN + 1U] = {0};
+    double lat = 0.0;
+    double lon = 0.0;
+
+    if (web_server_parse_location_json(body, loc_name, sizeof(loc_name), &lat, &lon) != ESP_OK) {
+        cJSON *err_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(err_obj, "error", "INVALID_LOCATION");
+        cJSON_AddStringToObject(err_obj, "message",
+            "Вкажіть назву населеного пункту (1–64 символи), широту (-90..90) та довготу (-180..180).");
+        esp_err_t res = send_json_response(req, "400 Bad Request", err_obj);
+        cJSON_Delete(err_obj);
+        return res;
+    }
+
+    esp_err_t err = config_store_save_location(loc_name, lat, lon);
+    cJSON *resp = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddStringToObject(resp, "error", "SAVE_FAILED");
+        cJSON_AddStringToObject(resp, "message", "Не вдалося зберегти місце знаходження у пам'яті пристрою.");
+        esp_err_t res = send_json_response(req, "500 Internal Server Error", resp);
+        cJSON_Delete(resp);
+        return res;
+    }
+
+    location_config_t saved_loc = {0};
+    config_store_get_location(&saved_loc);
+
+    cJSON_AddStringToObject(resp, "status", "saved");
+    cJSON_AddStringToObject(resp, "message", "Місце знаходження успішно збережено.");
+    cJSON *loc_obj = cJSON_AddObjectToObject(resp, "location");
+    if (loc_obj != NULL) {
+        cJSON_AddBoolToObject(loc_obj, "configured", saved_loc.configured);
+        cJSON_AddStringToObject(loc_obj, "name", saved_loc.name);
+        cJSON_AddNumberToObject(loc_obj, "latitude", saved_loc.latitude);
+        cJSON_AddNumberToObject(loc_obj, "longitude", saved_loc.longitude);
+    }
+
     esp_err_t res = send_json_response(req, "200 OK", resp);
     cJSON_Delete(resp);
     return res;
@@ -366,7 +493,7 @@ esp_err_t web_server_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 14;
+    config.max_uri_handlers = 16;
     config.lru_purge_enable = true;
     config.stack_size = 6144;
 
@@ -382,6 +509,8 @@ esp_err_t web_server_start(void)
         { .uri = "/app.js",              .method = HTTP_GET,  .handler = handle_get_app_js,             .user_ctx = NULL },
         { .uri = "/api/status",          .method = HTTP_GET,  .handler = handle_get_status,             .user_ctx = NULL },
         { .uri = "/api/health",          .method = HTTP_GET,  .handler = handle_get_status,             .user_ctx = NULL },
+        { .uri = "/api/location",        .method = HTTP_GET,  .handler = handle_get_location,           .user_ctx = NULL },
+        { .uri = "/api/location",        .method = HTTP_POST, .handler = handle_post_location,          .user_ctx = NULL },
         { .uri = "/api/wifi/scan",       .method = HTTP_GET,  .handler = handle_get_wifi_scan,          .user_ctx = NULL },
         { .uri = "/api/wifi/connect",    .method = HTTP_POST, .handler = handle_post_wifi_connect,      .user_ctx = NULL },
         { .uri = "/api/wifi/ap-password",.method = HTTP_POST, .handler = handle_post_ap_password,       .user_ctx = NULL },

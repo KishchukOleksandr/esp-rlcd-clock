@@ -106,6 +106,68 @@
       </form>
     </section>
 
+    <!-- Налаштування поточного місця знаходження (002-location-config: FR-001..FR-010) -->
+    <section class="card" aria-labelledby="location-config-heading">
+      <div class="card-header">
+        <h2 id="location-config-heading">Поточне місце знаходження (Україна)</h2>
+        <span id="loc-status-badge" class="badge badge-neutral">Не налаштовано</span>
+      </div>
+
+      <form id="form-location" novalidate>
+        <div class="form-group">
+          <label for="select-ua-city">Населений пункт зі списку</label>
+          <select id="select-ua-city" name="city_preset">
+            <option value="">— Оберіть населений пункт України —</option>
+          </select>
+          <small class="field-hint">Оберіть місто зі списку для автоматичної підстановки координат або виберіть «Інший населений пункт (ввести вручну)».</small>
+        </div>
+
+        <div class="form-group">
+          <label for="input-loc-name">Назва населеного пункту <span class="required">*</span></label>
+          <input
+            type="text"
+            id="input-loc-name"
+            name="name"
+            maxlength="64"
+            required
+            autocomplete="off"
+            placeholder="Наприклад: Київ, Львів, Буча">
+        </div>
+
+        <div class="coord-grid">
+          <div class="form-group">
+            <label for="input-loc-lat">Широта (Latitude) <span class="required">*</span></label>
+            <input
+              type="text"
+              inputmode="decimal"
+              id="input-loc-lat"
+              name="latitude"
+              required
+              autocomplete="off"
+              placeholder="Напр. 50.4501 (-90..90)">
+            <small class="field-hint">Діапазон: від -90 до 90</small>
+          </div>
+
+          <div class="form-group">
+            <label for="input-loc-lon">Довгота (Longitude) <span class="required">*</span></label>
+            <input
+              type="text"
+              inputmode="decimal"
+              id="input-loc-lon"
+              name="longitude"
+              required
+              autocomplete="off"
+              placeholder="Напр. 30.5234 (-180..180)">
+            <small class="field-hint">Діапазон: від -180 до 180</small>
+          </div>
+        </div>
+
+        <div id="loc-form-feedback" class="alert hidden" role="status"></div>
+
+        <button type="submit" id="btn-loc-submit" class="btn btn-primary">Зберегти місце знаходження</button>
+      </form>
+    </section>
+
     <!-- Налаштування пароля точки доступу та скидання (FR-002, FR-012) -->
     <section class="card" aria-labelledby="ap-config-heading">
       <div class="card-header">
