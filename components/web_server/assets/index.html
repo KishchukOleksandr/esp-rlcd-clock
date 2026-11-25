@@ -106,11 +106,32 @@
       </form>
     </section>
 
-    <!-- Налаштування поточного місця знаходження (002-location-config: FR-001..FR-010) -->
+    <!-- Налаштування поточного місця знаходження (002-location-config, 003-online-ukraine-cities) -->
     <section class="card" aria-labelledby="location-config-heading">
       <div class="card-header">
         <h2 id="location-config-heading">Поточне місце знаходження (Україна)</h2>
         <span id="loc-status-badge" class="badge badge-neutral">Не налаштовано</span>
+      </div>
+
+      <!-- Онлайн-пошук будь-якого населеного пункту України за наявності Інтернету на ESP32 (FR-001..FR-011) -->
+      <div id="loc-online-search-box" class="online-search-box">
+        <div class="online-search-header">
+          <label for="loc-search-input">Онлайн-пошук по всій Україні</label>
+          <span id="loc-online-badge" class="badge badge-neutral">Офлайн-режим: вбудований список і ручний ввід</span>
+        </div>
+        <div class="search-row">
+          <input
+            type="text"
+            id="loc-search-input"
+            maxlength="64"
+            autocomplete="off"
+            disabled
+            placeholder="Введіть назву міста, селища чи села (від 2 символів)…">
+          <button type="button" id="loc-search-btn" class="btn btn-secondary" disabled>Пошук</button>
+        </div>
+        <small id="loc-search-hint" class="field-hint">Доступно автоматично після підключення ESP32 до Wi-Fi з виходом в Інтернет.</small>
+        <div id="loc-search-feedback" class="alert hidden" role="status"></div>
+        <ul id="loc-search-results" class="search-results hidden" role="listbox" aria-label="Результати пошуку населених пунктів України"></ul>
       </div>
 
       <form id="form-location" novalidate>

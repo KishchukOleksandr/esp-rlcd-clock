@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "geo_search.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "web_server";
@@ -140,6 +141,30 @@ esp_err_t web_server_parse_location_json(const char *json_str,
     return ESP_OK;
 }
 
+esp_err_t web_server_extract_search_query(const char *query_str,
+                                          char *out_query, size_t out_size)
+{
+    if (query_str == NULL || out_query == NULL || out_size <= GEO_QUERY_MAX_BYTES) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char raw_q[GEO_QUERY_MAX_BYTES * 3U + 1U] = {0};
+    if (httpd_query_key_value(query_str, "q", raw_q, sizeof(raw_q)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char decoded_q[GEO_QUERY_MAX_BYTES + 16U] = {0};
+    if (geo_search_url_decode(raw_q, decoded_q, sizeof(decoded_q)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!geo_search_validate_query(decoded_q, out_query, out_size)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return ESP_OK;
+}
+
 static esp_err_t send_json_response(httpd_req_t *req, const char *status, cJSON *json_obj)
 {
     char *rendered = cJSON_PrintUnformatted(json_obj);
@@ -232,6 +257,15 @@ static esp_err_t handle_get_status(httpd_req_t *req)
         cJSON_AddStringToObject(ap, "ip", st.ap_ip);
         cJSON_AddNumberToObject(ap, "client_count", st.ap_client_count);
         cJSON_AddNumberToObject(ap, "channel", st.ap_channel);
+    }
+
+    geo_internet_status_t inet = {0};
+    geo_search_get_internet_status(&inet);
+    cJSON *inet_obj = cJSON_AddObjectToObject(root, "internet");
+    if (inet_obj != NULL) {
+        cJSON_AddBoolToObject(inet_obj, "available", inet.available);
+        cJSON_AddBoolToObject(inet_obj, "checked", inet.checked);
+        cJSON_AddBoolToObject(inet_obj, "checking", inet.checking);
     }
 
     location_config_t loc = {0};
@@ -461,6 +495,83 @@ static esp_err_t handle_post_location(httpd_req_t *req)
     return res;
 }
 
+static esp_err_t handle_get_location_search(httpd_req_t *req)
+{
+    size_t query_len = httpd_req_get_url_query_len(req);
+    char query_str[320] = {0};
+    char search_q[GEO_QUERY_MAX_BYTES + 1U] = {0};
+
+    if (query_len == 0U || query_len >= sizeof(query_str) ||
+        httpd_req_get_url_query_str(req, query_str, sizeof(query_str)) != ESP_OK ||
+        web_server_extract_search_query(query_str, search_q, sizeof(search_q)) != ESP_OK) {
+        cJSON *err_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(err_obj, "error", "INVALID_QUERY");
+        cJSON_AddStringToObject(err_obj, "message",
+            "Введіть щонайменше 2 символи для пошуку населеного пункту.");
+        esp_err_t res = send_json_response(req, "400 Bad Request", err_obj);
+        cJSON_Delete(err_obj);
+        return res;
+    }
+
+    geo_search_item_t items[GEO_SEARCH_MAX_RESULTS];
+    size_t count = 0U;
+    geo_search_result_t sres = geo_search_query_ukraine(search_q, items, GEO_SEARCH_MAX_RESULTS, &count);
+
+    cJSON *resp = cJSON_CreateObject();
+    if (resp == NULL) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+
+    if (sres != GEO_SEARCH_OK) {
+        const char *http_status = "503 Service Unavailable";
+        const char *err_code = "UPSTREAM_ERROR";
+        const char *err_msg = "Не вдалося виконати онлайн-пошук у даний момент. Скористайтеся офлайн-списком або ручним вводом.";
+
+        if (sres == GEO_SEARCH_ERR_BUSY) {
+            http_status = "429 Too Many Requests";
+            err_code = "SEARCH_BUSY";
+            err_msg = "Пошук уже виконується. Зачекайте завершення поточного запиту.";
+        } else if (sres == GEO_SEARCH_ERR_OFFLINE) {
+            err_code = "OFFLINE";
+            err_msg = "Онлайн-пошук недоступний без підключення пристрою до Інтернету. Скористайтеся офлайн-списком або ручним вводом.";
+        } else if (sres == GEO_SEARCH_ERR_TIMEOUT) {
+            err_code = "SEARCH_TIMEOUT";
+            err_msg = "Перевищено час очікування відповіді сервісу пошуку. Спробуйте ще раз або скористайтеся офлайн-списком.";
+        } else if (sres == GEO_SEARCH_ERR_INVALID_QUERY) {
+            http_status = "400 Bad Request";
+            err_code = "INVALID_QUERY";
+            err_msg = "Введіть щонайменше 2 символи для пошуку населеного пункту.";
+        }
+
+        cJSON_AddStringToObject(resp, "error", err_code);
+        cJSON_AddStringToObject(resp, "message", err_msg);
+        esp_err_t res = send_json_response(req, http_status, resp);
+        cJSON_Delete(resp);
+        return res;
+    }
+
+    cJSON_AddStringToObject(resp, "query", search_q);
+    cJSON_AddNumberToObject(resp, "count", (double)count);
+    cJSON *arr = cJSON_AddArrayToObject(resp, "results");
+    if (arr != NULL) {
+        for (size_t i = 0U; i < count; ++i) {
+            cJSON *obj = cJSON_CreateObject();
+            if (obj != NULL) {
+                cJSON_AddStringToObject(obj, "name", items[i].name);
+                cJSON_AddStringToObject(obj, "admin1", items[i].admin1);
+                cJSON_AddStringToObject(obj, "admin2", items[i].admin2);
+                cJSON_AddNumberToObject(obj, "latitude", items[i].latitude);
+                cJSON_AddNumberToObject(obj, "longitude", items[i].longitude);
+                cJSON_AddItemToArray(arr, obj);
+            }
+        }
+    }
+
+    esp_err_t res = send_json_response(req, "200 OK", resp);
+    cJSON_Delete(resp);
+    return res;
+}
+
 static esp_err_t handle_captive_portal_redirect(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "302 Found");
@@ -495,7 +606,7 @@ esp_err_t web_server_start(void)
     config.server_port = 80;
     config.max_uri_handlers = 16;
     config.lru_purge_enable = true;
-    config.stack_size = 6144;
+    config.stack_size = 8192;
 
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
@@ -511,6 +622,7 @@ esp_err_t web_server_start(void)
         { .uri = "/api/health",          .method = HTTP_GET,  .handler = handle_get_status,             .user_ctx = NULL },
         { .uri = "/api/location",        .method = HTTP_GET,  .handler = handle_get_location,           .user_ctx = NULL },
         { .uri = "/api/location",        .method = HTTP_POST, .handler = handle_post_location,          .user_ctx = NULL },
+        { .uri = "/api/location/search", .method = HTTP_GET,  .handler = handle_get_location_search,    .user_ctx = NULL },
         { .uri = "/api/wifi/scan",       .method = HTTP_GET,  .handler = handle_get_wifi_scan,          .user_ctx = NULL },
         { .uri = "/api/wifi/connect",    .method = HTTP_POST, .handler = handle_post_wifi_connect,      .user_ctx = NULL },
         { .uri = "/api/wifi/ap-password",.method = HTTP_POST, .handler = handle_post_ap_password,       .user_ctx = NULL },

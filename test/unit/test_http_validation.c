@@ -1,3 +1,4 @@
+#include "geo_search.h"
 #include "unity.h"
 #include "web_server.h"
 
@@ -91,4 +92,24 @@ TEST_CASE("web_server parses and validates POST /api/location JSON payloads (002
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
         web_server_parse_location_json("{bad json",
                                        loc_name, sizeof(loc_name), &lat, &lon));
+}
+
+TEST_CASE("web_server extracts and validates GET /api/location/search query parameter (003-online-ukraine-cities)", "[web_server]")
+{
+    char q[GEO_QUERY_MAX_BYTES + 1U] = {0};
+
+    /* Valid percent-encoded Cyrillic query ("Чортків") */
+    TEST_ASSERT_EQUAL(ESP_OK,
+        web_server_extract_search_query("q=%D0%A7%D0%BE%D1%80%D1%82%D0%BA%D1%96%D0%B2", q, sizeof(q)));
+    TEST_ASSERT_EQUAL_STRING("Чортків", q);
+
+    /* Missing q key, 1 Cyrillic char (%D0%9A = "К"), malformed escape, control char */
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_extract_search_query("foo=bar", q, sizeof(q)));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_extract_search_query("q=%D0%9A", q, sizeof(q)));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_extract_search_query("q=%ZZ", q, sizeof(q)));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG,
+        web_server_extract_search_query("q=Kyiv%0A", q, sizeof(q)));
 }
