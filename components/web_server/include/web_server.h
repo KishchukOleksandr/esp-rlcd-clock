@@ -60,6 +60,17 @@ esp_err_t web_server_parse_location_json(const char *json_str,
                                          char *out_name, size_t name_buf_len,
                                          double *out_lat, double *out_lon);
 
+/**
+ * @brief Extract, URL-decode, and validate the `q` parameter from `/api/location/search` query string (exposed for unit testing).
+ *
+ * @param[in]  query_str   Raw URL query string (e.g., "q=%D0%9A%D0%B8%D1%97%D0%B2").
+ * @param[out] out_query   Destination buffer of size >= `GEO_QUERY_MAX_BYTES + 1`.
+ * @param[in]  out_size    Size of `out_query`.
+ * @return ESP_OK if valid, ESP_ERR_INVALID_ARG otherwise.
+ */
+esp_err_t web_server_extract_search_query(const char *query_str,
+                                          char *out_query, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

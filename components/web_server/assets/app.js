@@ -93,6 +93,13 @@
   const locFeedback = document.getElementById("loc-form-feedback");
   const btnLocSubmit = document.getElementById("btn-loc-submit");
 
+  const locOnlineBadge = document.getElementById("loc-online-badge");
+  const locSearchInput = document.getElementById("loc-search-input");
+  const locSearchBtn = document.getElementById("loc-search-btn");
+  const locSearchHint = document.getElementById("loc-search-hint");
+  const locSearchFeedback = document.getElementById("loc-search-feedback");
+  const locSearchResults = document.getElementById("loc-search-results");
+
   const formAp = document.getElementById("form-ap-password");
   const inputApPass = document.getElementById("input-ap-password");
   const apFeedback = document.getElementById("ap-form-feedback");
@@ -100,6 +107,8 @@
   const btnFactoryReset = document.getElementById("btn-factory-reset");
 
   let locFormDirty = false;
+  let onlineSearchAvailable = false;
+  let onlineSearchInFlight = false;
 
   function showAlert(el, message, isError) {
     el.textContent = message;
@@ -218,7 +227,158 @@
     }
   }
 
+  function updateInternetUi(internet) {
+    if (!locOnlineBadge || !locSearchInput || !locSearchBtn) {
+      return;
+    }
+
+    const available = Boolean(internet && internet.available);
+    const checking = Boolean(internet && internet.checking);
+    onlineSearchAvailable = available;
+
+    if (available) {
+      locOnlineBadge.textContent = "Онлайн-пошук по Україні доступний";
+      locOnlineBadge.className = "badge badge-success";
+      locSearchInput.disabled = onlineSearchInFlight;
+      locSearchBtn.disabled = onlineSearchInFlight;
+      if (locSearchHint) {
+        locSearchHint.textContent = "Введіть назву міста, селища чи села (від 2 символів) і натисніть «Пошук» або Enter.";
+      }
+    } else if (checking) {
+      locOnlineBadge.textContent = "Перевірка доступу до Інтернету…";
+      locOnlineBadge.className = "badge badge-warn";
+      locSearchInput.disabled = true;
+      locSearchBtn.disabled = true;
+      if (locSearchHint) {
+        locSearchHint.textContent = "Перевіряємо підключення пристрою до Інтернету… Офлайн-список і ручний ввід доступні нижче.";
+      }
+    } else {
+      locOnlineBadge.textContent = "Офлайн-режим: вбудований список і ручний ввід";
+      locOnlineBadge.className = "badge badge-neutral";
+      locSearchInput.disabled = true;
+      locSearchBtn.disabled = true;
+      if (locSearchHint) {
+        locSearchHint.textContent = "Розширений онлайн-пошук недоступний без Інтернету на платі ESP32. Скористайтеся списком або ручним вводом нижче.";
+      }
+    }
+  }
+
+  function clearOnlineSearchResults() {
+    if (!locSearchResults) {
+      return;
+    }
+    locSearchResults.innerHTML = "";
+    locSearchResults.classList.add("hidden");
+  }
+
+  function formatAdminContext(item) {
+    const parts = [];
+    if (item.admin1) {
+      parts.push(item.admin1);
+    }
+    if (item.admin2 && item.admin2 !== item.admin1) {
+      parts.push(item.admin2);
+    }
+    if (Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))) {
+      parts.push(Number(item.latitude).toFixed(4) + ", " + Number(item.longitude).toFixed(4));
+    }
+    return parts.join(" • ");
+  }
+
+  async function runOnlineLocationSearch() {
+    if (!locSearchInput || !locSearchBtn || onlineSearchInFlight) {
+      return;
+    }
+
+    hideAlert(locSearchFeedback);
+    clearOnlineSearchResults();
+
+    if (!onlineSearchAvailable) {
+      showAlert(locSearchFeedback, "Онлайн-пошук недоступний без підключення пристрою до Інтернету. Скористайтеся офлайн-списком або ручним вводом.", true);
+      return;
+    }
+
+    const q = locSearchInput.value.trim();
+    const charCount = Array.from(q).length;
+    if (charCount < 2) {
+      showAlert(locSearchFeedback, "Введіть щонайменше 2 символи для пошуку населеного пункту України.", true);
+      return;
+    }
+    if (getUtf8ByteLength(q) > 64) {
+      showAlert(locSearchFeedback, "Пошуковий запит занадто довгий (максимум 64 байти UTF-8).", true);
+      return;
+    }
+
+    onlineSearchInFlight = true;
+    locSearchInput.disabled = true;
+    locSearchBtn.disabled = true;
+    locSearchBtn.textContent = "Пошук…";
+
+    try {
+      const res = await fetch("/api/location/search?q=" + encodeURIComponent(q), { cache: "no-store" });
+      const payload = await res.json();
+
+      if (!res.ok) {
+        showAlert(locSearchFeedback, payload.message || "Не вдалося виконати онлайн-пошук. Скористайтеся офлайн-списком або ручним вводом.", true);
+        if (payload.error === "OFFLINE") {
+          updateInternetUi({ available: false, checked: true, checking: false });
+        }
+        return;
+      }
+
+      const results = Array.isArray(payload.results) ? payload.results : [];
+      if (results.length === 0) {
+        showAlert(locSearchFeedback, "Населених пунктів України за запитом «" + q + "» не знайдено.", true);
+        return;
+      }
+
+      locSearchResults.innerHTML = "";
+      results.forEach(function (item) {
+        const li = document.createElement("li");
+        li.className = "search-result-item";
+        li.setAttribute("role", "option");
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "search-result-name";
+        nameEl.textContent = item.name;
+
+        const metaEl = document.createElement("span");
+        metaEl.className = "search-result-meta";
+        metaEl.textContent = formatAdminContext(item);
+
+        li.appendChild(nameEl);
+        li.appendChild(metaEl);
+
+        li.addEventListener("click", function () {
+          locFormDirty = true;
+          inputLocName.value = item.name;
+          inputLocLat.value = Number(item.latitude).toFixed(4);
+          inputLocLon.value = Number(item.longitude).toFixed(4);
+          const matchIdx = findSettlementIndex(item.name, Number(item.latitude), Number(item.longitude));
+          selectUaCity.value = matchIdx >= 0 ? String(matchIdx) : MANUAL_CITY_VALUE;
+          clearOnlineSearchResults();
+          hideAlert(locFeedback);
+          showAlert(locSearchFeedback, "Підставлено: " + item.name + (item.admin1 ? " (" + item.admin1 + ")" : "") + ". Натисніть «Зберегти місце знаходження».", false);
+        });
+
+        locSearchResults.appendChild(li);
+      });
+
+      locSearchResults.classList.remove("hidden");
+    } catch (err) {
+      showAlert(locSearchFeedback, "Помилка з'єднання під час онлайн-пошуку. Перевірте мережу або скористайтеся офлайн-списком.", true);
+    } finally {
+      onlineSearchInFlight = false;
+      locSearchBtn.textContent = "Пошук";
+      locSearchInput.disabled = !onlineSearchAvailable;
+      locSearchBtn.disabled = !onlineSearchAvailable;
+    }
+  }
+
   async function fetchStatus() {
+    if (onlineSearchInFlight) {
+      return;
+    }
     try {
       const res = await fetch("/api/status", { cache: "no-store" });
       if (!res.ok) {
@@ -254,6 +414,12 @@
 
       if (data.location) {
         syncLocationFormFromStatus(data.location);
+      }
+
+      if (data.internet) {
+        updateInternetUi(data.internet);
+      } else {
+        updateInternetUi({ available: false, checked: false, checking: false });
       }
 
       if (data.system) {
@@ -539,6 +705,18 @@
   initSettlementDropdown();
   btnRefresh.addEventListener("click", fetchStatus);
   btnScan.addEventListener("click", scanNetworks);
+
+  if (locSearchBtn) {
+    locSearchBtn.addEventListener("click", runOnlineLocationSearch);
+  }
+  if (locSearchInput) {
+    locSearchInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runOnlineLocationSearch();
+      }
+    });
+  }
 
   fetchStatus();
   setInterval(fetchStatus, 4000);

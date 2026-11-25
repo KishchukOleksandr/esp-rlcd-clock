@@ -11,6 +11,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "geo_search.h"
 #include "lwip/inet.h"
 #include "mdns.h"
 
@@ -335,6 +336,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                     }
                     xSemaphoreGive(s_status_mutex);
                 }
+                geo_search_notify_sta_disconnected();
                 break;
             }
 
@@ -365,6 +367,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                      s_status.sta_ip, WIFI_MDNS_FQDN);
             xSemaphoreGive(s_status_mutex);
         }
+        geo_search_notify_sta_connected();
     }
 }
 
@@ -598,6 +601,7 @@ esp_err_t wifi_manager_apply_factory_reset(void)
         xSemaphoreGive(s_status_mutex);
     }
 
+    geo_search_notify_sta_disconnected();
     esp_wifi_disconnect();
     apply_sta_config("", "");
     return apply_softap_config(WIFI_AP_DEFAULT_PASSWORD);
